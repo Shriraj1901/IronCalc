@@ -12,8 +12,9 @@ import type { WorkbookState } from "../workbookState";
 import { Axis } from "./axis";
 import { CellLinks, type LinkHoverCell } from "./cellLinks";
 import {
-  drawBorder,
+  type BorderSegment,
   drawBorderLine,
+  drawBorders,
   ICON_AREA_WIDTH,
   renderDataBar,
   renderIcon,
@@ -94,6 +95,19 @@ interface TextProperties {
 // Canvas rectangle (x, y, width, height) of one of the four panes
 type PaneRect = [number, number, number, number];
 
+// What a queued border line stands for, lowest first: see strokeBorders
+enum BorderPriority {
+  // The gap a spilling text leaves in the grid, painted in the background
+  // colour: the grid lines it meets stay whole
+  Gap = 0,
+  // A grid line
+  Grid = 1,
+  // A grid line in the colour of a cell's fill, so the fill reads as one
+  Fill = 2,
+  // A border the cell (or its neighbour) has
+  Border = 3,
+}
+
 export default class WorksheetCanvas {
   width: number;
 
@@ -153,6 +167,21 @@ export default class WorksheetCanvas {
 
   private cellLinks: CellLinks;
 
+  // The borders of the pane being painted, grouped by line style and colour
+  // ("style|color"), stroked together once the pane's fills are painted
+  // (see queueBorder and strokeBorders). A border always paints over the
+  // fills, as it did when each was stroked right after its cell's fill: the
+  // fills stop short of the border lines.
+  private borders: Map<
+    string,
+    {
+      style: string;
+      color: string;
+      priority: BorderPriority;
+      segments: BorderSegment[];
+    }
+  >;
+
   // The row and column axes (sizes and offsets) of the selected sheet.
   // Rebuilt on every render, since any edit may have changed the sizes, and
   // whenever the selected sheet changes in between.
@@ -183,6 +212,7 @@ export default class WorksheetCanvas {
     this.model = options.model;
     this.axes = null;
     this.frame = null;
+    this.borders = new Map();
     this.scroll = null;
     this.canvas = options.elements.canvas;
     this.width = options.width;
@@ -1251,7 +1281,6 @@ export default class WorksheetCanvas {
     const selectedSheet = this.selectedSheet();
     const style = this.getCellStyle(row, column).style;
     const leftStyle = this.getCellStyle(row, column - 1).style;
-    const context = this.ctx;
     const border = style.border;
 
     const fillColor = this.getEffectiveFillColor(row, column);
@@ -1261,45 +1290,56 @@ export default class WorksheetCanvas {
     if (this.spills.get(`${row}-${column}`) !== 1) {
       let borderLeftColor = this.getCellGridColor(selectedSheet, fillColor);
       let borderLeftStyle = "thin";
+      let priority = BorderPriority.Grid;
       if (border.left) {
         borderLeftColor =
           this.resolveColor(border.left.color) || this.theme.defaultTextColor;
         borderLeftStyle = border.left.style;
+        priority = BorderPriority.Border;
       } else if (leftStyle.border.right) {
         borderLeftColor =
           this.resolveColor(leftStyle.border.right.color) ||
           this.theme.defaultTextColor;
         borderLeftStyle = leftStyle.border.right.style;
+        priority = BorderPriority.Border;
       } else if (fillColor) {
         borderLeftColor = fillColor;
+        priority = BorderPriority.Fill;
       } else if (leftFillColor) {
         borderLeftColor = leftFillColor;
+        priority = BorderPriority.Fill;
       }
 
       // The left border of the first column is shared with the header separator
       if (x > headerColumnWidth + 0.51 || border.left) {
-        drawBorder(
-          context,
-          borderLeftStyle,
-          borderLeftColor,
+        this.queueBorder(borderLeftStyle, borderLeftColor, priority, [
           x,
           y,
           x,
           y + height,
           true,
-        );
+        ]);
       }
     } else {
       // If the cell spills to the right we don't want to set the border but we still need to fill
       // the border gap with the background color
       let borderLeftColor = this.theme.backgroundColor;
+      let priority = BorderPriority.Gap;
       if (fillColor) {
         borderLeftColor = fillColor;
+        priority = BorderPriority.Fill;
       } else if (leftFillColor) {
         borderLeftColor = leftFillColor;
+        priority = BorderPriority.Fill;
       }
       if (borderLeftColor) {
-        drawBorder(context, "thin", borderLeftColor, x, y, x, y + height, true);
+        this.queueBorder("thin", borderLeftColor, priority, [
+          x,
+          y,
+          x,
+          y + height,
+          true,
+        ]);
       }
     }
   }
@@ -1322,33 +1362,76 @@ export default class WorksheetCanvas {
 
     let borderTopColor = this.getCellGridColor(selectedSheet, fillColor);
     let borderTopStyle = "thin";
+    let priority = BorderPriority.Grid;
     if (border.top) {
       borderTopColor =
         this.resolveColor(border.top.color) || this.theme.defaultTextColor;
       borderTopStyle = border.top.style;
+      priority = BorderPriority.Border;
     } else if (topStyle.border.bottom) {
       borderTopColor =
         this.resolveColor(topStyle.border.bottom.color) ||
         this.theme.defaultTextColor;
       borderTopStyle = topStyle.border.bottom.style;
+      priority = BorderPriority.Border;
     } else if (fillColor) {
       borderTopColor = fillColor;
+      priority = BorderPriority.Fill;
     } else if (topFillColor) {
       borderTopColor = topFillColor;
+      priority = BorderPriority.Fill;
     }
     // The top border of the first row is shared with the header separator
     if (y > headerRowHeight + 0.51 || border.top) {
-      drawBorder(
-        this.ctx,
-        borderTopStyle,
-        borderTopColor,
+      this.queueBorder(borderTopStyle, borderTopColor, priority, [
         x,
         y,
         x + width,
         y,
         false,
-      );
+      ]);
     }
+  }
+
+  private queueBorder(
+    style: string,
+    color: string,
+    priority: BorderPriority,
+    segment: BorderSegment,
+  ): void {
+    const key = `${style}|${color}`;
+    const group = this.borders.get(key);
+    if (group) {
+      group.segments.push(segment);
+      // A colour is a cell's border for one cell and its fill-coloured
+      // grid line for another: the group takes the highest claim
+      group.priority = Math.max(group.priority, priority);
+    } else {
+      this.borders.set(key, { style, color, priority, segments: [segment] });
+    }
+  }
+
+  // Strokes the borders queued for the pane being painted, a stroke per
+  // style and colour, and empties the queue. Called while the pane's clip
+  // is still in place.
+  //
+  // Where two lines meet at a cell corner the one stroked last shows, so
+  // the groups are stroked in a fixed order: spill gaps first, then grid
+  // lines, then lines in a fill colour, then the cells' own borders, which
+  // thereby meet at their corners without a notch in the grid colour.
+  // Within a priority the order is by style and colour, so a corner looks
+  // the same whatever the order the cells were laid out in.
+  private strokeBorders(): void {
+    const groups = [...this.borders.values()].sort(
+      (a, b) =>
+        a.priority - b.priority ||
+        a.style.localeCompare(b.style) ||
+        a.color.localeCompare(b.color),
+    );
+    for (const { style, color, segments } of groups) {
+      drawBorders(this.ctx, style, color, segments);
+    }
+    this.borders.clear();
   }
 
   // Grid line color for a cell: the theme grid color, or the cell's
@@ -2498,6 +2581,7 @@ export default class WorksheetCanvas {
       }
       y += rowHeight;
     }
+    this.strokeBorders();
     context.restore();
     if (frozenRows === 0 && frozenColumns !== 0) {
       x = headerColumnWidth + 0.5;
@@ -2562,6 +2646,7 @@ export default class WorksheetCanvas {
       }
       y += rowHeight;
     }
+    this.strokeBorders();
     context.restore();
 
     // Draw frozen columns (bottom-left pane)
@@ -2579,6 +2664,7 @@ export default class WorksheetCanvas {
       }
       y += rowHeight;
     }
+    this.strokeBorders();
     context.restore();
 
     // Render all remaining cells (bottom-right pane)
@@ -2600,6 +2686,7 @@ export default class WorksheetCanvas {
       }
       y += rowHeight;
     }
+    this.strokeBorders();
     context.restore();
 
     // Render all cell texts

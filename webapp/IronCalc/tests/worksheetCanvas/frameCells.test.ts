@@ -2,7 +2,7 @@
 // in one call per pane; whatever it answers must be what the engine would
 // have said cell by cell, inside the blocks and outside them.
 
-import type { Model } from "@ironcalc/wasm";
+import { BorderStyle, BorderType, type Model } from "@ironcalc/wasm";
 import { expect, test } from "vitest";
 import { FrameCells } from "../../src/components/WorksheetCanvas/frameCells";
 import { newModel } from "./harness";
@@ -21,8 +21,8 @@ async function sampleModel(): Promise<Model> {
   model.updateRangeStyle(cell(3, 1), "font.b", "true");
   model.updateRangeStyle(cell(2, 2), "num_fmt", "0.00");
   model.setAreaWithBorder(cell(2, 3), {
-    item: { style: "thin", color: "#00FF00" },
-    type: "Bottom",
+    item: { style: BorderStyle.Thin, color: "#00FF00" },
+    type: BorderType.Bottom,
   });
   return model;
 }
