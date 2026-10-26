@@ -354,3 +354,33 @@ test('Merge cells variants', () => {
     model.undo();
     assert.deepEqual(model.getMergedCells(0), []);
 });
+
+test('Cells block', () => {
+    let model = new Model('Workbook1', 'en', 'UTC', 'en');
+    model.setUserInput(0, 1, 1, 'hello');
+    model.setUserInput(0, 2, 2, '=1+1');
+    model.updateRangeStyle({ sheet: 0, row: 2, column: 1, width: 1, height: 1 }, 'fill.fg_color', '#FF0000');
+
+    // A1:B2
+    const block = model.getCellsBlock(0, 1, 1, 2, 2);
+    assert.strictEqual(block.row, 1);
+    assert.strictEqual(block.column, 1);
+    assert.strictEqual(block.width, 2);
+    assert.strictEqual(block.height, 2);
+    // A1, B1, B2 are plain and share a style; A2 has its own
+    assert.strictEqual(block.styles.length, 2);
+    assert.strictEqual(block.style_indices.length, 4);
+    assert.strictEqual(block.style_indices[0], block.style_indices[1]);
+    assert.strictEqual(block.style_indices[1], block.style_indices[3]);
+    assert.notStrictEqual(block.style_indices[2], block.style_indices[0]);
+    const a2 = block.styles[block.style_indices[2]];
+    assert.strictEqual(a2.style.fill.color, '#FF0000');
+    assert.deepStrictEqual(a2, model.getCellStyle(0, 2, 1));
+    assert.deepStrictEqual(block.texts, [
+        { row: 1, column: 1, text: 'hello', cell_type: 2 },
+        { row: 2, column: 2, text: '2', cell_type: 1 },
+    ]);
+
+    assert.throws(() => model.getCellsBlock(0, 1, 1, 0, 1));
+    assert.throws(() => model.getCellsBlock(3, 1, 1, 1, 1));
+});

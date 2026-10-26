@@ -31,6 +31,29 @@ export interface AxisSizes {
   runs: SizeRun[];
 }
 
+// The formatted value of a non-empty cell in a CellsBlock. `cell_type` is
+// the value `Model.getCellType` returns for the cell.
+export interface CellText {
+  row: number;
+  column: number;
+  text: string;
+  cell_type: number;
+}
+
+// A rectangle of cells with their styles and texts, see
+// `Model.getCellsBlock`. `styles` lists each distinct style once;
+// `style_indices` gives, for every cell in row-major order, the index of its
+// style; `texts` lists the non-empty cells in row-major order.
+export interface CellsBlock {
+  row: number;
+  column: number;
+  width: number;
+  height: number;
+  styles: ExtendedCellStyle[];
+  style_indices: number[];
+  texts: CellText[];
+}
+
 export enum BorderType {
   All = "All",
   Inner = "Inner",

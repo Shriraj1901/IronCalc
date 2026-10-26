@@ -504,6 +504,29 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    /// The `height` by `width` rectangle of cells whose top-left cell is
+    /// (`row`, `column`), with the style of every cell and the text of the
+    /// non-empty ones, in one call: what a renderer needs to paint the
+    /// visible cells, instead of `getCellStyle` and `getFormattedCellValue`
+    /// per cell. The styles are those of `getCellStyle`, listed once each and
+    /// indexed per cell. The texts are those of `getFormattedCellValue`, with
+    /// the type of `getCellType`.
+    #[wasm_bindgen(js_name = "getCellsBlock", unchecked_return_type = "CellsBlock")]
+    pub fn get_cells_block(
+        &self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        width: i32,
+        height: i32,
+    ) -> Result<JsValue, JsError> {
+        let block = self
+            .model
+            .get_cells_block(sheet, row, column, width, height)
+            .map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&block).map_err(|e| to_js_error(e.to_string()))
+    }
+
     /// The row heights of a sheet in pixels, as the runs of rows with a
     /// non-default height (hidden rows have height 0). A UI builds its row
     /// axis from this in one call instead of asking for every row; the

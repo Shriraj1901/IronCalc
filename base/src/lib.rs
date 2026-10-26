@@ -79,6 +79,8 @@ pub use model::get_milliseconds_since_epoch;
 pub use model::FmtSettings;
 pub use model::Model;
 pub use user_model::BorderArea;
+pub use user_model::CellText;
+pub use user_model::CellsBlock;
 pub use user_model::ClipboardData;
 pub use user_model::UserModel;
 pub use utils::get_all_timezones;
