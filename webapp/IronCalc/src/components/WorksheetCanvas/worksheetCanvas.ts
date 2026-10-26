@@ -866,6 +866,21 @@ export default class WorksheetCanvas {
     }
     const selectedSheet = this.model.getSelectedSheet();
 
+    const fullText = this.model.getFormattedCellValue(
+      selectedSheet,
+      row,
+      column,
+    );
+    // The link is only used for the hover tooltip: it does not affect how the
+    // cell looks. The link styling (color, underline) is part of the cell style.
+    const link = this.cellLinks.getLink(row, column);
+    // An empty cell draws no text and spills nowhere: skip the style and type
+    // lookups and the text entry, unless the entry is needed to hover its
+    // link. Most visible cells are empty, so this is the common case.
+    if (fullText === "" && !link) {
+      return;
+    }
+
     const extended = this.model.getCellStyle(selectedSheet, row, column);
     const style = extended.style;
 
@@ -882,10 +897,6 @@ export default class WorksheetCanvas {
 
     const { font, color: textColor, fontSize } = this.getFontStyle(style);
 
-    // The link is only used for the hover tooltip: it does not affect how the
-    // cell looks. The link styling (color, underline) is part of the cell style.
-    const link = this.cellLinks.getLink(row, column);
-
     // Number = 1,
     // Text = 2,
     // LogicalValue = 4,
@@ -901,11 +912,6 @@ export default class WorksheetCanvas {
     const context = this.ctx;
     context.font = font;
     context.fillStyle = textColor;
-    const fullText = this.model.getFormattedCellValue(
-      selectedSheet,
-      row,
-      column,
-    );
 
     // Is there any better to determine the line height?
     const lineHeight = fontSize * 1.5;

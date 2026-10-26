@@ -92,6 +92,33 @@ const Worksheet = forwardRef(
     const [rowHeightDefault, setRowHeightDefault] = useState("");
 
     const ignoreScrollEventRef = useRef(false);
+    // The animation frame that will repaint the canvas after a scroll, if one
+    // is pending. Scroll events can arrive several times per frame and a
+    // repaint is only useful once per frame, so onScroll coalesces them.
+    const scrollFrame = useRef<number | null>(null);
+    const renderOnNextFrame = (): void => {
+      if (scrollFrame.current !== null) {
+        return;
+      }
+      scrollFrame.current = requestAnimationFrame(() => {
+        scrollFrame.current = null;
+        worksheetCanvas.current?.renderSheet();
+      });
+    };
+    const cancelPendingRender = (): void => {
+      if (scrollFrame.current !== null) {
+        cancelAnimationFrame(scrollFrame.current);
+        scrollFrame.current = null;
+      }
+    };
+    useEffect(
+      () => () => {
+        if (scrollFrame.current !== null) {
+          cancelAnimationFrame(scrollFrame.current);
+        }
+      },
+      [],
+    );
     // The engine's view (its top-left cell) as of the last time it was
     // synced with the DOM scroller, in either direction (see the render
     // effect and onScroll)
@@ -450,6 +477,8 @@ const Worksheet = forwardRef(
       }
       syncedView.current = currentView();
 
+      // This render supersedes any repaint a scroll had scheduled
+      cancelPendingRender();
       canvas.renderSheet();
       worksheetCanvas.current = canvas;
     });
@@ -550,7 +579,10 @@ const Worksheet = forwardRef(
       const canvas = worksheetCanvas.current;
       canvas.setScrollPosition({ left, top });
       resizeSpacer(canvas, left, top);
-      canvas.renderSheet();
+      // The engine and the spacer follow every event (cheap, and the pointer
+      // handlers rely on the engine's view being current); the repaint waits
+      // for the next frame
+      renderOnNextFrame();
       // The engine's cell followed the offset: the next render must not take
       // that for a move of the engine's own
       syncedView.current = currentView();
