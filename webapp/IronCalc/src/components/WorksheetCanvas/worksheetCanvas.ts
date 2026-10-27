@@ -1198,14 +1198,18 @@ export default class WorksheetCanvas {
     const selectedSheet = this.selectedSheet();
     const extended = this.getCellStyle(row, column);
     const style = extended.style;
-
-    let backgroundColor = this.theme.backgroundColor;
-    if (style.fill.color) {
-      backgroundColor = this.resolveColor(style.fill.color);
-    }
     const context = this.ctx;
-    context.fillStyle = backgroundColor;
-    context.fillRect(x + 0.5, y + 0.5, width - 1, height - 1);
+
+    // A plain cell was filled by fillPane. A merged range is painted here
+    // from its anchor over its whole rectangle, inside its border lines.
+    if (merge) {
+      let backgroundColor = this.theme.backgroundColor;
+      if (style.fill.color) {
+        backgroundColor = this.resolveColor(style.fill.color);
+      }
+      context.fillStyle = backgroundColor;
+      context.fillRect(x + 0.5, y + 0.5, width - 1, height - 1);
+    }
 
     // CF overlays rendered on top of the background.
     if (extended.data_bar) {
@@ -1265,12 +1269,11 @@ export default class WorksheetCanvas {
   // Algorithm:
   //  * we use the border if present
   //  * otherwise we use the border of the adjacent cell
-  //  * otherwise we use the color of the background
-  //  * otherwise we use the background color of the adjacent cell
-  //  * if everything else fails we use the default grid color
-  // Backgrounds are the effective (merge-aware) fills; borders are read from
-  // the cells themselves — a merged range's perimeter borders come from its
-  // perimeter cells.
+  //  * otherwise, if the cell or its neighbour is filled, the edge is already
+  //    painted (fillPane paints a fill over the edges of its cell)
+  //  * otherwise we use the default grid color
+  // A merged range is the exception: it is painted inside its border lines,
+  // so its edges still take its fill color (or its neighbour's).
   private renderLeftBorder(
     row: number,
     column: number,
@@ -1283,46 +1286,25 @@ export default class WorksheetCanvas {
     const leftStyle = this.getCellStyle(row, column - 1).style;
     const border = style.border;
 
-    const fillColor = this.getEffectiveFillColor(row, column);
-    const leftFillColor = this.getEffectiveFillColor(row, column - 1);
+    const inMerge =
+      this.mergeMap.size > 0 &&
+      (this.mergeMap.has(`${row}-${column}`) ||
+        this.mergeMap.has(`${row}-${column - 1}`));
+    const fillColor = inMerge ? this.getEffectiveFillColor(row, column) : null;
+    const leftFillColor = inMerge
+      ? this.getEffectiveFillColor(row, column - 1)
+      : null;
+    const painted =
+      !inMerge &&
+      (this.isFilled(row, column) || this.isFilled(row, column - 1));
 
     // Skip the left border for spill cells.
-    if (this.spills.get(`${row}-${column}`) !== 1) {
-      let borderLeftColor = this.getCellGridColor(selectedSheet, fillColor);
-      let borderLeftStyle = "thin";
-      let priority = BorderPriority.Grid;
-      if (border.left) {
-        borderLeftColor =
-          this.resolveColor(border.left.color) || this.theme.defaultTextColor;
-        borderLeftStyle = border.left.style;
-        priority = BorderPriority.Border;
-      } else if (leftStyle.border.right) {
-        borderLeftColor =
-          this.resolveColor(leftStyle.border.right.color) ||
-          this.theme.defaultTextColor;
-        borderLeftStyle = leftStyle.border.right.style;
-        priority = BorderPriority.Border;
-      } else if (fillColor) {
-        borderLeftColor = fillColor;
-        priority = BorderPriority.Fill;
-      } else if (leftFillColor) {
-        borderLeftColor = leftFillColor;
-        priority = BorderPriority.Fill;
-      }
-
-      // The left border of the first column is shared with the header separator
-      if (x > headerColumnWidth + 0.51 || border.left) {
-        this.queueBorder(borderLeftStyle, borderLeftColor, priority, [
-          x,
-          y,
-          x,
-          y + height,
-          true,
-        ]);
-      }
-    } else {
+    if (this.spills.size > 0 && this.spills.get(`${row}-${column}`) === 1) {
       // If the cell spills to the right we don't want to set the border but we still need to fill
       // the border gap with the background color
+      if (painted) {
+        return;
+      }
       let borderLeftColor = this.theme.backgroundColor;
       let priority = BorderPriority.Gap;
       if (fillColor) {
@@ -1341,6 +1323,42 @@ export default class WorksheetCanvas {
           true,
         ]);
       }
+      return;
+    }
+
+    let borderLeftColor = this.getCellGridColor(selectedSheet, fillColor);
+    let borderLeftStyle = "thin";
+    let priority = BorderPriority.Grid;
+    if (border.left) {
+      borderLeftColor =
+        this.resolveColor(border.left.color) || this.theme.defaultTextColor;
+      borderLeftStyle = border.left.style;
+      priority = BorderPriority.Border;
+    } else if (leftStyle.border.right) {
+      borderLeftColor =
+        this.resolveColor(leftStyle.border.right.color) ||
+        this.theme.defaultTextColor;
+      borderLeftStyle = leftStyle.border.right.style;
+      priority = BorderPriority.Border;
+    } else if (painted) {
+      return;
+    } else if (fillColor) {
+      borderLeftColor = fillColor;
+      priority = BorderPriority.Fill;
+    } else if (leftFillColor) {
+      borderLeftColor = leftFillColor;
+      priority = BorderPriority.Fill;
+    }
+
+    // The left border of the first column is shared with the header separator
+    if (x > headerColumnWidth + 0.51 || border.left) {
+      this.queueBorder(borderLeftStyle, borderLeftColor, priority, [
+        x,
+        y,
+        x,
+        y + height,
+        true,
+      ]);
     }
   }
 
@@ -1357,8 +1375,18 @@ export default class WorksheetCanvas {
     const style = this.getCellStyle(row, column).style;
     const topStyle = this.getCellStyle(row - 1, column).style;
     const border = style.border;
-    const fillColor = this.getEffectiveFillColor(row, column);
-    const topFillColor = this.getEffectiveFillColor(row - 1, column);
+
+    const inMerge =
+      this.mergeMap.size > 0 &&
+      (this.mergeMap.has(`${row}-${column}`) ||
+        this.mergeMap.has(`${row - 1}-${column}`));
+    const fillColor = inMerge ? this.getEffectiveFillColor(row, column) : null;
+    const topFillColor = inMerge
+      ? this.getEffectiveFillColor(row - 1, column)
+      : null;
+    const painted =
+      !inMerge &&
+      (this.isFilled(row, column) || this.isFilled(row - 1, column));
 
     let borderTopColor = this.getCellGridColor(selectedSheet, fillColor);
     let borderTopStyle = "thin";
@@ -1374,6 +1402,8 @@ export default class WorksheetCanvas {
         this.theme.defaultTextColor;
       borderTopStyle = topStyle.border.bottom.style;
       priority = BorderPriority.Border;
+    } else if (painted) {
+      return;
     } else if (fillColor) {
       borderTopColor = fillColor;
       priority = BorderPriority.Fill;
@@ -1390,6 +1420,76 @@ export default class WorksheetCanvas {
         y,
         false,
       ]);
+    }
+  }
+
+  // Whether the cell has a fill (its own: a cell covered by a merged range
+  // answers for itself, see getEffectiveFillColor for the range's fill)
+  private isFilled(row: number, column: number): boolean {
+    if (this.frame) {
+      return this.frame.isFilled(row, column);
+    }
+    return !!this.model.getCellStyle(this.selectedSheet(), row, column).style
+      .fill.color;
+  }
+
+  // Paints the fills of the cells of a pane (rows firstRow..lastRow, columns
+  // firstColumn..lastColumn, whose first cell sits at (x0, y0)), a rectangle
+  // per run of cells of one fill colour along a row. A fill covers the grid
+  // lines on the edges of its cell, as a fill does in Excel; where two fills
+  // meet, the later cell (right, below) owns the shared edge. Cells without
+  // a fill take the background color inside their grid lines. The header
+  // separators are never painted over.
+  private fillPane(
+    pane: number,
+    firstRow: number,
+    lastRow: number,
+    firstColumn: number,
+    lastColumn: number,
+    x0: number,
+    y0: number,
+  ): void {
+    const frame = this.frame;
+    if (!frame || firstRow > lastRow || firstColumn > lastColumn) {
+      return;
+    }
+    const { rows, columns } = this.getAxes();
+    const context = this.ctx;
+    const columnStart0 = columns.start(firstColumn);
+    let y = y0;
+    for (let row = firstRow; row <= lastRow; row += 1) {
+      const height = rows.size(row);
+      if (height <= 0) {
+        continue;
+      }
+      for (const run of frame.fillRuns(pane, row)) {
+        const from = Math.max(run.column, firstColumn);
+        const to = Math.min(run.column + run.width - 1, lastColumn);
+        if (from > to) {
+          continue;
+        }
+        const x = x0 + columns.start(from) - columnStart0;
+        const width =
+          columns.start(to) + columns.size(to) - columns.start(from);
+        if (width <= 0) {
+          continue;
+        }
+        if (run.color) {
+          const left = x > headerColumnWidth + 0.51 ? x - 0.5 : x + 0.5;
+          const top = y > headerRowHeight + 0.51 ? y - 0.5 : y + 0.5;
+          context.fillStyle = run.color;
+          context.fillRect(
+            left,
+            top,
+            x + width + 0.5 - left,
+            y + height + 0.5 - top,
+          );
+        } else {
+          context.fillStyle = this.theme.backgroundColor;
+          context.fillRect(x + 0.5, y + 0.5, width - 1, height - 1);
+        }
+      }
+      y += height;
     }
   }
 
@@ -2571,6 +2671,7 @@ export default class WorksheetCanvas {
 
     // Draw frozen rows and columns (top-left-pane)
     this.clipToPane(0, panes);
+    this.fillPane(0, 1, frozenRows, 1, frozenColumns, x, y);
     for (let row = 1; row <= frozenRows; row += 1) {
       const rowHeight = this.getRowHeight(selectedSheet, row);
       x = headerColumnWidth + 0.5;
@@ -2632,6 +2733,15 @@ export default class WorksheetCanvas {
     // Draw frozen rows (top-right pane)
     this.clipToPane(1, panes);
     y = headerRowHeight + 0.5;
+    this.fillPane(
+      1,
+      1,
+      frozenRows,
+      topLeftCell.column,
+      bottomRightCell.column,
+      scrollX0,
+      y,
+    );
     for (let row = 1; row <= frozenRows; row += 1) {
       x = scrollX0;
       const rowHeight = this.getRowHeight(selectedSheet, row);
@@ -2652,6 +2762,15 @@ export default class WorksheetCanvas {
     // Draw frozen columns (bottom-left pane)
     this.clipToPane(2, panes);
     y = scrollY0;
+    this.fillPane(
+      2,
+      topLeftCell.row,
+      bottomRightCell.row,
+      1,
+      frozenColumns,
+      headerColumnWidth,
+      y,
+    );
     for (let { row } = topLeftCell; row <= bottomRightCell.row; row += 1) {
       x = headerColumnWidth;
       const rowHeight = this.getRowHeight(selectedSheet, row);
@@ -2670,6 +2789,15 @@ export default class WorksheetCanvas {
     // Render all remaining cells (bottom-right pane)
     this.clipToPane(3, panes);
     y = scrollY0;
+    this.fillPane(
+      3,
+      topLeftCell.row,
+      bottomRightCell.row,
+      topLeftCell.column,
+      bottomRightCell.column,
+      scrollX0,
+      y,
+    );
     for (let { row } = topLeftCell; row <= bottomRightCell.row; row += 1) {
       x = scrollX0;
       const rowHeight = this.getRowHeight(selectedSheet, row);
@@ -2733,6 +2861,10 @@ export default class WorksheetCanvas {
   // Fetches the cells of the four panes (the frozen corner, the frozen rows,
   // the frozen columns and the scrolling pane), each grown by one cell on
   // every side: a cell's borders consult its neighbours.
+  //
+  // The cells of a pane are painted in three passes: fillPane paints the
+  // fills, renderCellStyle (per cell) the overlays and queues the borders,
+  // strokeBorders strokes them.
   private fetchFrameCells(
     topLeftCell: Cell,
     bottomRightCell: Cell,
@@ -2760,11 +2892,12 @@ export default class WorksheetCanvas {
     };
     const { row: top, column: left } = topLeftCell;
     const { row: bottom, column: right } = bottomRightCell;
+    // One area per pane, in pane order (see getPanes)
     return new FrameCells(this.model, sheet, [
-      area(top, bottom, left, right),
+      area(1, frozenRows, 1, frozenColumns),
       area(1, frozenRows, left, right),
       area(top, bottom, 1, frozenColumns),
-      area(1, frozenRows, 1, frozenColumns),
+      area(top, bottom, left, right),
     ]);
   }
 }

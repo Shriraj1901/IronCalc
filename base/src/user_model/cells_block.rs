@@ -26,6 +26,20 @@ pub struct CellText {
     pub cell_type: i32,
 }
 
+/// Consecutive cells of one row in a [CellsBlock] that share a fill colour.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct FillRun {
+    /// The row of the run
+    pub row: i32,
+    /// The first column of the run
+    pub column: i32,
+    /// The number of cells in the run
+    pub width: i32,
+    /// The fill colour, resolved as [UserModel::resolve_color] resolves it,
+    /// or the empty string for cells without a fill
+    pub color: String,
+}
+
 /// A rectangle of cells with their styles and texts: what a renderer needs
 /// to paint them, fetched in one call. See [UserModel::get_cells_block].
 #[derive(Serialize, Debug, Clone)]
@@ -46,6 +60,9 @@ pub struct CellsBlock {
     pub style_indices: Vec<u32>,
     /// The cells with a non-empty formatted value, in row-major order
     pub texts: Vec<CellText>,
+    /// Every cell of the block as runs of one fill colour along its row, in
+    /// row-major order: a renderer paints a run with one rectangle
+    pub fills: Vec<FillRun>,
 }
 
 /// A cell beyond the edge of the sheet, or a neighbour without a border on
@@ -130,10 +147,16 @@ impl UserModel<'_> {
         };
 
         let mut styles: Vec<ExtendedStyle> = Vec::new();
+        // The resolved fill colour of each entry of `styles` ("" for none)
+        let mut fill_colors: Vec<String> = Vec::new();
         let mut shared: HashMap<[i32; 5], u32> = HashMap::new();
         let mut style_indices = Vec::with_capacity((width * height) as usize);
         let mut texts = Vec::new();
+        let mut fills = Vec::new();
         for r in row..=last_row {
+            // The run being extended: its first column, its width and the
+            // index in `styles` of a style with its fill colour
+            let mut run: Option<(i32, i32, usize)> = None;
             for c in column..=last_column {
                 // A conditionally formatted cell gets an entry of its own:
                 // its style also depends on its value.
@@ -173,7 +196,13 @@ impl UserModel<'_> {
                 let index = match key.and_then(|key| shared.get(&key)) {
                     Some(index) => *index,
                     None => {
-                        styles.push(self.get_extended_cell_style(sheet, r, c)?);
+                        let style = self.get_extended_cell_style(sheet, r, c)?;
+                        fill_colors.push(if style.style.fill.color.is_none() {
+                            String::new()
+                        } else {
+                            self.resolve_color(&style.style.fill.color)
+                        });
+                        styles.push(style);
                         let index = (styles.len() - 1) as u32;
                         if let Some(key) = key {
                             shared.insert(key, index);
@@ -182,6 +211,33 @@ impl UserModel<'_> {
                     }
                 };
                 style_indices.push(index);
+                let index = index as usize;
+                match &mut run {
+                    Some((_, run_width, run_index))
+                        if fill_colors[*run_index] == fill_colors[index] =>
+                    {
+                        *run_width += 1;
+                    }
+                    _ => {
+                        if let Some((start, run_width, run_index)) = run.take() {
+                            fills.push(FillRun {
+                                row: r,
+                                column: start,
+                                width: run_width,
+                                color: fill_colors[run_index].clone(),
+                            });
+                        }
+                        run = Some((c, 1, index));
+                    }
+                }
+            }
+            if let Some((start, run_width, run_index)) = run.take() {
+                fills.push(FillRun {
+                    row: r,
+                    column: start,
+                    width: run_width,
+                    color: fill_colors[run_index].clone(),
+                });
             }
             for (c, cell) in worksheet
                 .sheet_data
@@ -207,6 +263,7 @@ impl UserModel<'_> {
             styles,
             style_indices,
             texts,
+            fills,
         })
     }
 }

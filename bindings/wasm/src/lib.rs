@@ -510,7 +510,8 @@ impl Model {
     /// visible cells, instead of `getCellStyle` and `getFormattedCellValue`
     /// per cell. The styles are those of `getCellStyle`, listed once each and
     /// indexed per cell. The texts are those of `getFormattedCellValue`, with
-    /// the type of `getCellType`.
+    /// the type of `getCellType`. The fills are the cells as runs of one
+    /// fill colour along each row, resolved as `resolveColor` resolves them.
     #[wasm_bindgen(js_name = "getCellsBlock", unchecked_return_type = "CellsBlock")]
     pub fn get_cells_block(
         &self,

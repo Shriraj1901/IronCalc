@@ -20,6 +20,6 @@ pub use common::UserModel;
 #[cfg(test)]
 pub use ui::SelectedView;
 
-pub use cells_block::{CellText, CellsBlock};
+pub use cells_block::{CellText, CellsBlock, FillRun};
 pub use clipboard::ClipboardData;
 pub use common::BorderArea;

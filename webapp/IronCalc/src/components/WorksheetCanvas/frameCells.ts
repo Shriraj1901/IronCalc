@@ -19,6 +19,7 @@ import type {
   CellText,
   Color,
   ExtendedCellStyle,
+  FillRun,
   Model,
 } from "@ironcalc/wasm";
 
@@ -32,6 +33,10 @@ export interface BlockArea {
 interface Block extends CellsBlock {
   // The text entry of each cell, by its offset in the block
   textAt: (CellText | undefined)[];
+  // Whether each entry of `styles` has a fill
+  filledStyle: boolean[];
+  // The fill runs of each row of the block, by the row's offset in it
+  runsOfRow: FillRun[][];
 }
 
 export class FrameCells {
@@ -39,11 +44,12 @@ export class FrameCells {
   readonly sheet: number;
   // Whether the sheet shows its grid lines
   readonly showGridLines: boolean;
-  private blocks: Block[];
+  // One block per area, in the areas' order; null for an empty area
+  private blocks: (Block | null)[];
   private colors: Map<string, string>;
 
-  // Fetches `areas` of `sheet`. An area is clipped to the sheet; an empty
-  // one is skipped. Areas may overlap; the first one holding a cell answers.
+  // Fetches `areas` of `sheet`. An empty area fetches nothing. Areas may
+  // overlap; the first one holding a cell answers.
   constructor(model: Model, sheet: number, areas: BlockArea[]) {
     this.model = model;
     this.sheet = sheet;
@@ -52,6 +58,7 @@ export class FrameCells {
     this.blocks = [];
     for (const area of areas) {
       if (area.width <= 0 || area.height <= 0) {
+        this.blocks.push(null);
         continue;
       }
       const block = model.getCellsBlock(
@@ -69,7 +76,15 @@ export class FrameCells {
           (text.row - block.row) * block.width + text.column - block.column
         ] = text;
       }
-      this.blocks.push({ ...block, textAt });
+      const filledStyle = block.styles.map((style) => !!style.style.fill.color);
+      const runsOfRow: FillRun[][] = [];
+      for (let i = 0; i < block.height; i += 1) {
+        runsOfRow.push([]);
+      }
+      for (const run of block.fills) {
+        runsOfRow[run.row - block.row].push(run);
+      }
+      this.blocks.push({ ...block, textAt, filledStyle, runsOfRow });
     }
   }
 
@@ -77,6 +92,7 @@ export class FrameCells {
   private find(row: number, column: number): [Block, number] | null {
     for (const block of this.blocks) {
       if (
+        block &&
         row >= block.row &&
         row < block.row + block.height &&
         column >= block.column &&
@@ -104,6 +120,26 @@ export class FrameCells {
       return block.textAt[offset]?.text ?? "";
     }
     return this.model.getFormattedCellValue(this.sheet, row, column);
+  }
+
+  // Whether the cell has a fill
+  isFilled(row: number, column: number): boolean {
+    const found = this.find(row, column);
+    if (found) {
+      const [block, offset] = found;
+      return block.filledStyle[block.style_indices[offset]];
+    }
+    return !!this.model.getCellStyle(this.sheet, row, column).style.fill.color;
+  }
+
+  // The fill runs of `row` in the block of the area at `area` (none when
+  // the area was empty or does not hold the row)
+  fillRuns(area: number, row: number): FillRun[] {
+    const block = this.blocks[area];
+    if (!block || row < block.row || row >= block.row + block.height) {
+      return [];
+    }
+    return block.runsOfRow[row - block.row];
   }
 
   getCellType(row: number, column: number): number {

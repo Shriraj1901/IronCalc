@@ -380,6 +380,11 @@ test('Cells block', () => {
         { row: 1, column: 1, text: 'hello', cell_type: 2 },
         { row: 2, column: 2, text: '2', cell_type: 1 },
     ]);
+    assert.deepStrictEqual(block.fills, [
+        { row: 1, column: 1, width: 2, color: '' },
+        { row: 2, column: 1, width: 1, color: '#FF0000' },
+        { row: 2, column: 2, width: 1, color: '' },
+    ]);
 
     assert.throws(() => model.getCellsBlock(0, 1, 1, 0, 1));
     assert.throws(() => model.getCellsBlock(3, 1, 1, 1, 1));

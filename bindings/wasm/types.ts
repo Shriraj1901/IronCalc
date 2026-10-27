@@ -40,10 +40,22 @@ export interface CellText {
   cell_type: number;
 }
 
+// Consecutive cells of one row of a CellsBlock sharing a fill colour:
+// `color` is the resolved colour (as `Model.resolveColor` gives it), or ""
+// for cells without a fill.
+export interface FillRun {
+  row: number;
+  column: number;
+  width: number;
+  color: string;
+}
+
 // A rectangle of cells with their styles and texts, see
 // `Model.getCellsBlock`. `styles` lists each distinct style once;
 // `style_indices` gives, for every cell in row-major order, the index of its
-// style; `texts` lists the non-empty cells in row-major order.
+// style; `texts` lists the non-empty cells in row-major order; `fills`
+// covers every cell as runs of one fill colour along each row, in row-major
+// order.
 export interface CellsBlock {
   row: number;
   column: number;
@@ -52,6 +64,7 @@ export interface CellsBlock {
   styles: ExtendedCellStyle[];
   style_indices: number[];
   texts: CellText[];
+  fills: FillRun[];
 }
 
 export enum BorderType {

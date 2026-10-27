@@ -79,6 +79,33 @@ test("empty areas are skipped and overlapping areas agree", async () => {
   expect(frame.getCellStyle(3, 3)).toEqual(model.getCellStyle(0, 3, 3));
 });
 
+test("fills are known per cell and as runs per row of an area", async () => {
+  const model = await sampleModel();
+  model.updateRangeStyle(
+    { sheet: 0, row: 2, column: 1, width: 3, height: 1 },
+    "fill.fg_color",
+    "#FF0000",
+  );
+  const frame = new FrameCells(model, 0, [
+    { row: 1, column: 1, width: 0, height: 0 },
+    { row: 1, column: 1, width: 4, height: 3 },
+  ]);
+  expect(frame.isFilled(2, 1)).toBe(true);
+  expect(frame.isFilled(2, 4)).toBe(false);
+  expect(frame.isFilled(1, 1)).toBe(false);
+  // outside the areas: the engine answers
+  expect(frame.isFilled(20, 20)).toBe(false);
+  expect(frame.fillRuns(0, 2)).toEqual([]);
+  expect(frame.fillRuns(1, 2)).toEqual([
+    { row: 2, column: 1, width: 3, color: "#FF0000" },
+    { row: 2, column: 4, width: 1, color: "" },
+  ]);
+  expect(frame.fillRuns(1, 1)).toEqual([
+    { row: 1, column: 1, width: 4, color: "" },
+  ]);
+  expect(frame.fillRuns(1, 7)).toEqual([]);
+});
+
 test("the sheet and its grid lines flag are recorded", async () => {
   const model = await sampleModel();
   model.setShowGridLines(0, false);

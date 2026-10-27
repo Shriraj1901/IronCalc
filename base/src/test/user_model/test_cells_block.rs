@@ -6,7 +6,7 @@ use crate::{
     expressions::types::Area,
     test::user_model::util::new_empty_user_model,
     types::Color,
-    user_model::{BorderArea, CellText, UserModel},
+    user_model::{BorderArea, CellText, FillRun, UserModel},
 };
 
 fn cell(row: i32, column: i32) -> Area {
@@ -19,7 +19,8 @@ fn cell(row: i32, column: i32) -> Area {
     }
 }
 
-// Every cell of the block has the style get_extended_cell_style gives it
+// Every cell of the block has the style get_extended_cell_style gives it,
+// and the fill runs cover the block in order, each in its cells' fill colour
 fn assert_styles_match(model: &UserModel, row: i32, column: i32, width: i32, height: i32) {
     let block = model
         .get_cells_block(0, row, column, width, height)
@@ -40,6 +41,65 @@ fn assert_styles_match(model: &UserModel, row: i32, column: i32, width: i32, hei
             );
         }
     }
+    let mut runs = block.fills.iter();
+    for r in row..row + height {
+        let mut c = column;
+        while c < column + width {
+            let run = runs.next().expect("a run for every cell");
+            assert_eq!((run.row, run.column), (r, c), "runs are contiguous");
+            assert!(run.width >= 1 && c + run.width <= column + width);
+            for cell_column in c..c + run.width {
+                let style = model
+                    .get_extended_cell_style(0, r, cell_column)
+                    .unwrap()
+                    .style;
+                let expected = if style.fill.color.is_none() {
+                    String::new()
+                } else {
+                    model.resolve_color(&style.fill.color)
+                };
+                assert_eq!(run.color, expected, "cell ({r}, {cell_column})");
+            }
+            c += run.width;
+        }
+    }
+    assert!(runs.next().is_none());
+}
+
+#[test]
+fn fills_are_runs_of_one_colour_along_a_row() {
+    let mut model = new_empty_user_model();
+    // A1:B1 red, C1 blue, D1 plain, E1 red and bold (another style, same fill)
+    for c in [1, 2, 5] {
+        model
+            .update_range_style(&cell(1, c), "fill.fg_color", "#FF0000")
+            .unwrap();
+    }
+    model
+        .update_range_style(&cell(1, 3), "fill.fg_color", "#0000FF")
+        .unwrap();
+    model
+        .update_range_style(&cell(1, 5), "font.b", "true")
+        .unwrap();
+    // A1:E2
+    let block = model.get_cells_block(0, 1, 1, 5, 2).unwrap();
+    let run = |row, column, width, color: &str| FillRun {
+        row,
+        column,
+        width,
+        color: color.to_string(),
+    };
+    assert_eq!(
+        block.fills,
+        vec![
+            run(1, 1, 2, "#FF0000"),
+            run(1, 3, 1, "#0000FF"),
+            run(1, 4, 1, ""),
+            run(1, 5, 1, "#FF0000"),
+            run(2, 1, 5, ""),
+        ]
+    );
+    assert_styles_match(&model, 1, 1, 5, 2);
 }
 
 #[test]
